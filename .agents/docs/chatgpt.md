@@ -56,6 +56,15 @@ Qt 5 当前只有已验证的 x86_64 官方 SDK。
 不能把资源存在、安装成功或静态检查通过当作桌面运行验收。
 内核、显示服务、设备驱动和桌面会话仍属于宿主边界，不通过关闭 sandbox 绕过安全策略。
 
+## ELF 处理
+
+应用自带若干静态链接的辅助程序：codex app-server、`codex-code-mode-host`、`node_repl`、`rg`、`tectonic`。
+自动 elfpatch 会给没有解释器的 ELF 也写 RPATH，这会损坏 static-pie（运行即 core dump）。
+所以配方在 `install()` 里调用 `elfpatch.skip()` 关闭自动 patch，改为只给动态链接的 x86_64 ELF
+（带 `PT_INTERP` 或 `DT_NEEDED` 的文件）设置 loader 和依赖闭包；静态程序和其他架构的 prebuild 保持原样。
+libxpkg 修好后（openxlings/libxpkg#43），这段接管代码可以删掉。
+`.github/workflows/chatgpt-runtime.yml` 会真正运行装出来的辅助程序，并检查动态库全部解析在 xlings 内。
+
 ## Chromium 沙箱与 AppArmor
 
 官方 deb 的 postinst 会安装 `/etc/apparmor.d/chatgpt`，允许 `/usr/lib/chatgpt/ChatGPT`

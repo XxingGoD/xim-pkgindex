@@ -1,0 +1,48 @@
+name: chatgpt runtime
+
+# `ci-test.yml` installs a changed recipe and removes it; it never runs anything
+# inside the payload. ChatGPT's first release passed it while elfpatch had
+# corrupted every statically linked helper the app ships (the codex app-server
+# dumped core), so this installs the recipe and executes what it installed.
+
+on:
+  pull_request:
+    paths:
+      - 'pkgs/c/chatgpt.lua'
+      - '.github/workflows/chatgpt-runtime.yml'
+      - '.github/scripts/program-checks/install-xlings.sh'
+      - '.github/scripts/program-checks/chatgpt.sh'
+  workflow_dispatch:
+
+concurrency:
+  group: chatgpt-runtime-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install xlings
+        timeout-minutes: 15
+        run: bash .github/scripts/program-checks/install-xlings.sh
+
+      - name: Install chatgpt from this checkout
+        timeout-minutes: 20
+        run: |
+          set -euo pipefail
+          xlings="$HOME/.xlings/bin/xlings"
+          "$xlings" config --add-xpkg pkgs/c/chatgpt.lua
+          # the recipe imports xim.pkgindex.*: the local index needs this checkout's libs/
+          mkdir -p "$HOME/.xlings/data/xim-pkgindex-local/libs"
+          cp libs/*.lua "$HOME/.xlings/data/xim-pkgindex-local/libs/"
+          "$xlings" install local:chatgpt -y
+          app=$(ls -d "$HOME"/.xlings/data/xpkgs/local-x-chatgpt/*/app)
+          [ "$(printf '%s\n' "$app" | wc -l)" -eq 1 ] || { echo "::error::expected one installed app/, found: $app"; exit 1; }
+          echo "CHATGPT_APP=$app" >> "$GITHUB_ENV"
+
+      - name: The installed helpers run and resolve inside xlings
+        timeout-minutes: 10
+        run: bash .github/scripts/program-checks/chatgpt.sh
