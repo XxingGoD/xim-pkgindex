@@ -36,7 +36,8 @@ static=0; ran=0
 while IFS= read -r f; do
     is_elf "$f" || continue
     case "$f" in */ChatGPT|*.so|*.so.*|*.node) continue ;; esac
-    timeout 20 "$f" --version >/dev/null 2>&1; rc=$?
+    # </dev/null: a helper reading stdin would eat the rest of the file list
+    timeout 20 "$f" --version </dev/null >/dev/null 2>&1; rc=$?
     ran=$((ran + 1))
     reading "${f#"$CHATGPT_APP"/} --version" "exit=$rc"
     [ "$rc" -lt 128 ] || fail "${f#"$CHATGPT_APP"/} died with exit $rc"
