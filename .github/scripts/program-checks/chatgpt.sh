@@ -28,6 +28,12 @@ for f in resources/codex resources/rg resources/cua_node/bin/node; do
     reading "$f" "$(ls -l "$CHATGPT_APP/$f" 2>&1)"
 done
 
+# `chatgpt` is bin/chatgpt next to app/: it gates the sandbox, then execs the app
+launcher="$(dirname "$CHATGPT_APP")/bin/chatgpt"
+[ -x "$launcher" ] && sh -n "$launcher" || fail "no runnable launcher at $launcher"
+grep -q "exec \"\$app/ChatGPT\" \"\$@\"" "$launcher" || fail "the launcher does not exec the app"
+reading "launcher" "$launcher"
+
 loader=$(readelf -l "$CHATGPT_APP/ChatGPT" | sed -n 's/.*interpreter: \(.*\)\]/\1/p')
 reading "loader" "$loader"
 case "$loader" in "$home"/*) ;; *) fail "ChatGPT's interpreter is not an xlings payload: $loader" ;; esac

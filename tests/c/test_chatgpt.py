@@ -69,7 +69,8 @@ def test_isolation():
     assert_uses_new_api(filename)
     text = RECIPE.read_text()
     assert all((module.startswith("xim.libxpkg.") or module == "xim.pkgindex.graphics") for module in re.findall(r'import\("([^"]+)"\)', text))
-    assert not re.search(r"\b(?:sudo|apt install|dnf install|pacman -S|--no-sandbox)\b", text)
+    assert not re.search(r"\b(?:apt install|dnf install|pacman -S)\b", text)
+    assert not re.search(r"(?:system\.exec|os\.exec|io\.popen)\([^\n]*\bsudo\b", text)
 
 
 @pytest.mark.index
@@ -169,6 +170,46 @@ print("PATCHED " .. table.concat(patched, ","))
         assert (target / "app/resources/asar-link").read_bytes() == b"fixture"
         profile = (target / "share/apparmor/xlings-chatgpt").read_text()
         assert f'"{target}/app/ChatGPT" flags=(unconfined)' in profile and "userns," in profile
+        assert "profile xlings-chatgpt-26.924.22138 " in profile
+        check_launcher(tmp_path, target)
+
+
+def check_launcher(tmp_path, target):
+    """bin/chatgpt runs the app unless the host's sandbox provably cannot start"""
+    launcher = target / "bin/chatgpt"
+    assert os.access(launcher, os.X_OK)
+    subprocess.run(["sh", "-n", str(launcher)], check=True)
+    # the same script against fixture copies of the two kernel interfaces
+    host = tmp_path / "host"
+    (host / "profiles/other.3").mkdir(parents=True)
+    (host / "profiles/other.3/name").write_text("other\n")
+    text = launcher.read_text()
+    assert text.count("/proc/sys/kernel/apparmor_restrict_unprivileged_userns") == 1
+    assert text.count("/sys/kernel/security/apparmor/policy/profiles/") == 1
+    probe = tmp_path / "probe"
+    probe.write_text(text
+        .replace("/proc/sys/kernel/apparmor_restrict_unprivileged_userns", str(host / "restrict"))
+        .replace("/sys/kernel/security/apparmor/policy/profiles/", str(host / "profiles") + "/"))
+
+    def run(restrict, *args):
+        (host / "restrict").write_text(restrict)
+        return subprocess.run(["sh", str(probe), *args], capture_output=True, text=True)
+
+    assert run("0\n").returncode == 0                     # unrestricted: the app runs
+    blocked = run("1\n")                                  # restricted, profile not loaded
+    assert blocked.returncode == 1
+    # both ways out, each as commands that run as printed, and what the profile grants
+    assert f"sudo install -m 0644 '{target}/share/apparmor/xlings-chatgpt' /etc/apparmor.d/xlings-chatgpt-26.924.22138\n" in blocked.stderr
+    assert "sudo apparmor_parser -r /etc/apparmor.d/xlings-chatgpt-26.924.22138\n" in blocked.stderr
+    assert "chatgpt --no-sandbox\n" in blocked.stderr
+    assert f'| profile xlings-chatgpt-26.924.22138 "{target}/app/ChatGPT" flags=(unconfined) {{' in blocked.stderr
+    assert "|   userns," in blocked.stderr
+    assert run("1\n", "--no-sandbox").returncode == 0     # the user's own choice
+    (host / "profiles/xlings-chatgpt-26.924.22138.9").mkdir()
+    (host / "profiles/xlings-chatgpt-26.924.22138.9/name").write_text("xlings-chatgpt-26.924.22138\n")
+    assert run("1\n").returncode == 0                     # profile loaded
+    # the app is started in two places, both with exactly the user's arguments
+    assert re.findall(r"exec .*", text) == ['exec "$app/ChatGPT" "$@" ;; esac', 'exec "$app/ChatGPT" "$@"']
 
 
 @pytest.mark.static
@@ -178,9 +219,10 @@ def test_direct_xvm_registration(tmp_path, macos):
     if not lua:
         pytest.skip("Lua is required")
     root = tmp_path / "version's directory with spaces"
-    bindir = root / ("ChatGPT.app/Contents/MacOS" if macos else "app")
+    bindir, alias = ("ChatGPT.app/Contents/MacOS", "ChatGPT") if macos else ("bin", "chatgpt")
+    bindir = root / bindir
     bindir.mkdir(parents=True)
-    (bindir / "ChatGPT").touch()
+    (bindir / alias).touch()
     code = r'''
 import = function() end
 os.isfile = function(p) local f=io.open(p); if f then f:close(); return true end; return false end
@@ -190,7 +232,7 @@ graphics = { consumer_envs = function() return {} end }
 xvm = { add = function(name, node)
     assert(name == "chatgpt")
     assert(node.bindir == arg[3])
-    assert(node.alias == "ChatGPT")
+    assert(node.alias == arg[4])
     assert(node.envs.CODEX_SPARKLE_ENABLED == "false")
     -- schemas come through XDG_DATA_DIRS (<subos>/share), never a payload path
     assert(node.envs.GSETTINGS_SCHEMA_DIR == nil)
@@ -198,7 +240,8 @@ end }
 dofile(arg[1])
 assert(config())
 '''
-    subprocess.run([lua, "-", str(RECIPE), str(root), str(bindir)], input=code, text=True, check=True)
+    subprocess.run([lua, "-", str(RECIPE), str(root), str(bindir), alias],
+                   input=code, text=True, check=True)
 
 
 @pytest.mark.verify

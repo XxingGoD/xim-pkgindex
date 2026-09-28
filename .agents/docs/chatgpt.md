@@ -81,8 +81,25 @@ install -m 0644 ~/.xlings/data/xpkgs/xim-x-chatgpt/$v/share/apparmor/xlings-chat
 apparmor_parser -r /etc/apparmor.d/xlings-chatgpt-$v
 ```
 
-xlings 不执行任何 root 操作，也不使用 `--no-sandbox`。安装钩子的输出在成功时不会显示给用户，
-所以这一步只能写在文档里，不能靠安装时提示。
+xlings 不执行任何 root 操作，也不替用户加 `--no-sandbox`。安装钩子的输出在成功时不会显示给用户，
+所以提示放在启动时：`chatgpt` 命令是安装生成的 `bin/chatgpt` 启动脚本。宿主限制了用户命名空间、
+且本版本的 profile 没有加载（`/sys/kernel/security/apparmor/policy/profiles/*/name` 里没有
+`xlings-chatgpt-<版本>`）时，它打印两种做法并以 1 退出，而不是让 Chromium 报
+`No usable sandbox!` 后崩溃：一是 profile 的内容和可直接复制执行的 `sudo` 命令（带实际路径），
+二是 `chatgpt --no-sandbox`（无需 root，但关闭渲染进程隔离）。用户自己传的 `--no-sandbox`
+原样放行。profile 按版本绑定路径，
+升级后需要为新版本再加载一次。
+
+## 代理
+
+Chromium 在 GNOME 会话里读桌面的系统代理（`org.gnome.system.proxy`），不读 `https_proxy`
+这类环境变量。系统代理为“关闭”而只在 shell 里导出了代理变量时，界面会停在图标和转圈，日志里是
+`accountsHttpStatus=0` 和 `Timed out while fetching post-login Statsig bootstrap`。官方 deb
+在同一宿主上表现相同。在系统设置里打开网络代理，或启动时指定：
+
+```sh
+chatgpt --proxy-server=http://127.0.0.1:7897
+```
 
 ## 宿主边界
 

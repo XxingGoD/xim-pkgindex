@@ -90,6 +90,50 @@ local function apparmor_profile(dir)
     return dir .. "/share/apparmor/xlings-chatgpt"
 end
 
+-- `chatgpt` on Linux. Where the host restricts unprivileged user namespaces
+-- and this version's profile is not loaded, Chromium's sandbox cannot start
+-- and ChatGPT dies with "No usable sandbox!". Running it is the first moment
+-- a user sees anything (hook output is not shown), so the launcher says what
+-- to do there instead: load the profile (root), or run with --no-sandbox.
+-- It only prints the choice; an explicit --no-sandbox is the user's call.
+local LAUNCHER = [==[#!/bin/sh
+app=%s
+profile=%s
+source=%s
+case " $* " in *" --no-sandbox "*) exec "$app/ChatGPT" "$@" ;; esac
+if [ "$(cat /proc/sys/kernel/apparmor_restrict_unprivileged_userns 2>/dev/null)" = 1 ] &&
+   ! grep -qsx "$profile" /sys/kernel/security/apparmor/policy/profiles/*/name; then
+    cat >&2 <<EOF
+chatgpt: Chromium's sandbox cannot start on this host.
+
+The kernel lets a program create the user namespaces the sandbox needs only
+under an AppArmor profile (kernel.apparmor_restrict_unprivileged_userns=1),
+and none is loaded for this install. Either:
+
+1. Load the profile once. Needs root; the sandbox stays on. It grants user
+   namespaces to this ChatGPT executable and nothing else:
+
+$(sed 's/^/       | /' "$source")
+
+   Run:
+
+       sudo install -m 0644 '$source' /etc/apparmor.d/$profile
+       sudo apparmor_parser -r /etc/apparmor.d/$profile
+       chatgpt
+
+   An upgrade installs a new path: repeat this for the new version.
+
+2. Run without Chromium's sandbox. No root, but web content is not isolated
+   from the rest of the app:
+
+       chatgpt --no-sandbox
+
+EOF
+    exit 1
+fi
+exec "$app/ChatGPT" "$@"
+]==]
+
 -- True for an x86_64 ELF that the dynamic loader has to resolve: it asks for
 -- an interpreter (PT_INTERP) or names a library (DT_NEEDED). The app also
 -- ships statically linked helpers -- the codex app-server,
@@ -189,6 +233,13 @@ function install()
                 "profile xlings-chatgpt-", version, " \"", dir, "/app/ChatGPT\" flags=(unconfined) {\n",
                 "  userns,\n}\n")
         f:close()
+        os.mkdir(dir .. "/bin")
+        local launcher = dir .. "/bin/chatgpt"
+        f = assert(io.open(launcher, "w"))
+        f:write(string.format(LAUNCHER, quote(dir .. "/app"), "xlings-chatgpt-" .. version,
+                              quote(apparmor_profile(dir))))
+        f:close()
+        system.exec("chmod 0755 " .. quote(launcher))
     elseif archive:match("%.zip$") then
         local app = parent .. "/ChatGPT.app"
         system.exec("test \"$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' " ..
@@ -200,15 +251,15 @@ function install()
         error("Unsupported ChatGPT archive")
     end
 
-    return os.isfile(dir .. "/app/ChatGPT") or os.isfile(dir .. "/ChatGPT.app/Contents/MacOS/ChatGPT")
+    return os.isfile(dir .. "/bin/chatgpt") or os.isfile(dir .. "/ChatGPT.app/Contents/MacOS/ChatGPT")
 end
 
 function config()
     local dir = pkginfo.install_dir()
-    local bindir = dir .. "/app"
+    local bindir, alias = dir .. "/bin", "chatgpt"
     local envs = { CODEX_SPARKLE_ENABLED = "false" }
     if os.isfile(dir .. "/ChatGPT.app/Contents/MacOS/ChatGPT") then
-        bindir = dir .. "/ChatGPT.app/Contents/MacOS"
+        bindir, alias = dir .. "/ChatGPT.app/Contents/MacOS", "ChatGPT"
     else
         -- XDG_DATA_DIRS among these reaches <subos>/share, where gtk3
         -- places its compiled GSettings schemas
@@ -218,7 +269,7 @@ function config()
     -- The updater switch reaches this app and its children only
     xvm.add("chatgpt", {
         bindir = bindir,
-        alias = "ChatGPT",
+        alias = alias,
         envs = envs,
     })
     return true
