@@ -21,6 +21,13 @@ reading() { printf 'READING %s: %s\n' "$1" "$2"; }
 fail() { echo "::error::$*"; exit 1; }
 is_elf() { [ "$(head -c4 "$1" 2>/dev/null | od -An -c | tr -d ' ')" = "177ELF" ]; }
 
+# What landed, before judging it: a short payload reads as missing helpers.
+reading "payload" "$(find "$CHATGPT_APP" -type f | wc -l) files, $(du -sb "$CHATGPT_APP" | cut -f1) bytes"
+reading "disk" "$(df -h "$CHATGPT_APP" | tail -1)"
+for f in resources/codex resources/rg resources/cua_node/bin/node; do
+    reading "$f" "$(ls -l "$CHATGPT_APP/$f" 2>&1)"
+done
+
 loader=$(readelf -l "$CHATGPT_APP/ChatGPT" | sed -n 's/.*interpreter: \(.*\)\]/\1/p')
 reading "loader" "$loader"
 case "$loader" in "$home"/*) ;; *) fail "ChatGPT's interpreter is not an xlings payload: $loader" ;; esac
