@@ -56,7 +56,7 @@ while IFS= read -r f; do
     is_elf "$f" || continue
     case "$f" in *musl*|*android*) continue ;; esac
     file -b "$f" | grep -q "x86-64.*dynamically linked" || continue
-    out=$("$loader" --list "$f" 2>&1) || fail "${f#"$CHATGPT_APP"/}: $out"
+    out=$("$loader" --list "$f" </dev/null 2>&1) || fail "${f#"$CHATGPT_APP"/}: $out"
     missing=$(printf '%s\n' "$out" | grep "not found")
     [ -z "$missing" ] || fail "${f#"$CHATGPT_APP"/}: $missing"
     host=$(printf '%s\n' "$out" | grep -oE "=> /[^ ]+" | grep -v "=> $home/")
