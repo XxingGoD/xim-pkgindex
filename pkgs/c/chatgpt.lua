@@ -79,6 +79,7 @@ import("xim.libxpkg.pkginfo")
 import("xim.libxpkg.system")
 import("xim.libxpkg.xvm")
 import("xim.libxpkg.json")
+import("xim.libxpkg.elfpatch")
 import("xim.pkgindex.graphics")
 
 local function quote(s)
@@ -87,6 +88,68 @@ end
 
 local function apparmor_profile(dir)
     return dir .. "/share/apparmor/xlings-chatgpt"
+end
+
+-- True for an x86_64 ELF that the dynamic loader has to resolve: it asks for
+-- an interpreter (PT_INTERP) or names a library (DT_NEEDED). The app also
+-- ships statically linked helpers -- the codex app-server,
+-- codex-code-mode-host, node_repl, rg, tectonic -- which do neither, and
+-- prebuilt native modules for other architectures, which this loader cannot
+-- serve either way.
+local function dynamic_elf(file)
+    local f = io.open(file, "rb")
+    if not f then return false end
+    local h = f:read(64)
+    if not h or #h < 64 or h:sub(1, 4) ~= "\127ELF" or h:byte(5) ~= 2
+       or string.unpack("<I2", h, 0x13) ~= 62 then                  -- EM_X86_64
+        f:close()
+        return false
+    end
+    local phoff = string.unpack("<I8", h, 0x21)
+    local phentsize, phnum = string.unpack("<I2I2", h, 0x37)
+    f:seek("set", phoff)
+    local ph = f:read(phentsize * phnum) or ""
+    local dynamic = false
+    for i = 0, phnum - 1 do
+        local at = i * phentsize + 1
+        if #ph < at + 39 then break end
+        local ptype = string.unpack("<I4", ph, at)
+        if ptype == 3 then f:close() return true end            -- PT_INTERP
+        if ptype == 2 then                                       -- PT_DYNAMIC
+            f:seek("set", string.unpack("<I8", ph, at + 8))
+            local d = f:read(string.unpack("<I8", ph, at + 32)) or ""
+            for j = 1, #d - 15, 16 do
+                local tag = string.unpack("<i8", d, j)
+                if tag == 0 then break end                       -- DT_NULL
+                if tag == 1 then dynamic = true break end        -- DT_NEEDED
+            end
+        end
+    end
+    f:close()
+    return dynamic
+end
+
+-- Stamp this payload's loader and dependency closure onto the dynamically
+-- linked x86_64 ELF files only. Auto-elfpatch treats every ELF alike and
+-- gives one without PT_INTERP an RPATH; on a static-pie that is corruption --
+-- the helpers above dump core, the app-server with them, and the app stops at
+-- "Organization settings could not be loaded". So this package takes its
+-- patching over through the elfpatch interface, until auto-elfpatch skips
+-- such files itself (openxlings/libxpkg#43).
+local function patch_dynamic_elves(root)
+    elfpatch.skip()
+    -- glibc.lua exports this loader as exports.runtime.loader
+    local loader = assert(pkginfo.resolved_dep("xim:glibc"), "xim:glibc is not resolved").install_dir
+        .. "/lib64/ld-linux-x86-64.so.2"
+    assert(os.isfile(loader), "no loader at " .. loader)
+    local rpath = elfpatch.closure_lib_paths()
+    local p = assert(io.popen("find " .. quote(root) .. " -type f"))
+    for file in p:lines() do
+        if dynamic_elf(file) then
+            elfpatch.patch_elf_loader_rpath(file, { loader = loader, rpath = rpath })
+        end
+    end
+    p:close()
 end
 
 function install()
@@ -114,6 +177,7 @@ function install()
         os.tryrm(dir .. "/app")
         os.mv(app, dir .. "/app")
         os.tryrm(unpack)
+        patch_dynamic_elves(dir .. "/app")
         -- The deb's postinst loads an AppArmor profile that grants user
         -- namespaces to /usr/lib/chatgpt/ChatGPT, which Chromium's sandbox
         -- needs on hosts that restrict them (Ubuntu 23.10+). The same profile

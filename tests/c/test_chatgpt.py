@@ -87,8 +87,17 @@ def test_deb_install_roundtrip(tmp_path, version):
     stage = tmp_path / "input"
     app = stage / "usr/lib/chatgpt"
     (app / "resources").mkdir(parents=True)
-    (app / "ChatGPT").write_text("#!/bin/sh\nexit 0\n")
+    # a real dynamically linked x86_64 program stands in for the app, and a
+    # minimal ELF with no PT_INTERP and no PT_DYNAMIC for a static helper
+    host_true = Path("/bin/true").resolve()
+    if host_true.read_bytes()[18:20] != b"\x3e\x00":                     # EM_X86_64
+        pytest.skip("needs an x86_64 host program for the dynamic fixture")
+    shutil.copy(host_true, app / "ChatGPT")
     (app / "ChatGPT").chmod(0o755)
+    static = bytearray(64)
+    static[0:4] = b"\x7fELF"; static[4] = 2; static[5] = 1; static[18:20] = b"\x3e\x00"
+    (app / "resources").mkdir(exist_ok=True)
+    (app / "resources/static-helper").write_bytes(bytes(static))
     (app / "resources/app.asar").write_bytes(b"fixture")
     (app / "resources/asar-link").symlink_to("app.asar")
     (app / "resources/linux-package-metadata.json").write_text(json.dumps({"version": version}))
@@ -104,6 +113,8 @@ def test_deb_install_roundtrip(tmp_path, version):
     dep = tmp_path / "dependency"
     dep.mkdir()
     (dep / "7zz").symlink_to(sevenzip)
+    (dep / "lib64").mkdir()
+    (dep / "lib64/ld-linux-x86-64.so.2").write_bytes(b"loader")
     target = tmp_path / "installed's folder"
     harness = r'''
 local recipe, archive, target, dep = arg[1], arg[2], arg[3], arg[4]
@@ -118,6 +129,16 @@ pkginfo = {
     install_file = function() return archive end,
     version = function() return "26.924.22138" end,
     dep_install_dir = function() return dep end,
+    resolved_dep = function() return { install_dir = dep } end,
+}
+patched = {}
+elfpatch = {
+    skip = function() skipped = true end,
+    closure_lib_paths = function() return { "/closure" } end,
+    patch_elf_loader_rpath = function(file, opts)
+        assert(opts.loader == dep .. "/lib64/ld-linux-x86-64.so.2")
+        patched[#patched + 1] = file:match("[^/]+$")
+    end,
 }
 system = { exec = run }
 json = { loadfile = function(p)
@@ -127,6 +148,9 @@ end }
 import = function() end
 dofile(recipe)
 assert(install())
+assert(skipped, "auto-elfpatch must be switched off")
+table.sort(patched)
+print("PATCHED " .. table.concat(patched, ","))
 '''
     result = subprocess.run([lua, "-", str(RECIPE), str(tmp_path / "fixture.deb"), str(target), str(dep)],
                             input=harness, capture_output=True, text=True)
@@ -136,6 +160,8 @@ assert(install())
         assert not (target / "app/ChatGPT").exists()
     else:
         assert result.returncode == 0, result.stderr
+        # the dynamic program is patched; the static helper is left as shipped
+        assert "PATCHED ChatGPT\n" in result.stdout, result.stdout
         assert not (target / ".unpack").exists()
         assert (target / "app/resources/app.asar").read_bytes() == b"fixture"
         assert os.access(target / "app/ChatGPT", os.X_OK)
