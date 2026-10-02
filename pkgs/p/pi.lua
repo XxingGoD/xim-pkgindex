@@ -74,9 +74,14 @@ function install()
     if is_host("windows") then
         local build_dep = assert(pkginfo.build_dep("7zip"), "xim:7zip build dependency is missing")
         local seven_zip = path.join(build_dep.path, "7z.exe")
+        local function powershell_escape(value)
+            return (value:gsub("'", "''"))
+        end
+        -- Start-Process joins arguments into a command line; retain quotes for
+        -- archive/output paths without nesting double quotes through cmd.exe.
         system.exec(string.format([[
-"%s" x "%s" -o"%s" -y
-]], seven_zip, archive, staging))
+powershell -NoProfile -ExecutionPolicy Bypass -Command "$quote = [char]34; $process = Start-Process -FilePath '%s' -ArgumentList ('x ' + $quote + '%s' + $quote + ' -o' + $quote + '%s' + $quote + ' -y') -Wait -NoNewWindow -PassThru; exit $process.ExitCode"
+]], powershell_escape(seven_zip), powershell_escape(archive), powershell_escape(staging)))
     else
         system.exec(string.format([[tar -xzf "%s" -C "%s"]], archive, staging))
     end
