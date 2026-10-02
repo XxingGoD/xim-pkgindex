@@ -27,7 +27,7 @@ package = {
     xpm = {
         linux = {
             source = "https://github.com/can1357/oh-my-pi/releases/download/v${version}/omp-linux-${arch_alias}",
-            ["latest"] = { ref = "18.4.10" },
+            ["latest"] = { ref = "18.4.12" },
             ["18.4.10"] = {
                 arch_alias = { x86_64 = "x64", aarch64 = "arm64" },
                 sha256 = {
@@ -35,10 +35,17 @@ package = {
                     aarch64 = "8f6b0b6547b149b7f538d44848e80502f5895663ca9cef6b14c7337be2f4f617",
                 },
             },
+            ["18.4.12"] = {
+                arch_alias = { x86_64 = "x64", aarch64 = "arm64" },
+                sha256 = {
+                    x86_64 = "8178466631d09c2165c19c14c92ee7f4e3e68c5f41953e8815adfb1214a64999",
+                    aarch64 = "7e9c91e9f34765abfd775b8f87c00bb82d5c14025d58770fe4213791452f3182",
+                },
+            },
         },
         macosx = {
             source = "https://github.com/can1357/oh-my-pi/releases/download/v${version}/omp-darwin-${arch_alias}",
-            ["latest"] = { ref = "18.4.10" },
+            ["latest"] = { ref = "18.4.12" },
             ["18.4.10"] = {
                 arch_alias = { x86_64 = "x64", aarch64 = "arm64" },
                 sha256 = {
@@ -46,15 +53,29 @@ package = {
                     aarch64 = "23d3f9ab712fe700e80a43dbd1e8159dfea8e106bf717648a49b1bba1ad3e508",
                 },
             },
+            ["18.4.12"] = {
+                arch_alias = { x86_64 = "x64", aarch64 = "arm64" },
+                sha256 = {
+                    x86_64 = "d3305b641d3e62c30f8cd5a44343d219cdc45c3ad9a6c13729df61749ff40ac6",
+                    aarch64 = "1a81bd323ba6d67374adf5645fe52e194671416e15c69ef17ac18e32b42c55ff",
+                },
+            },
         },
         windows = {
             source = "https://github.com/can1357/oh-my-pi/releases/download/v${version}/omp-windows-${arch_alias}.exe",
-            ["latest"] = { ref = "18.4.10" },
+            ["latest"] = { ref = "18.4.12" },
             ["18.4.10"] = {
                 arch_alias = { x86_64 = "x64", aarch64 = "arm64" },
                 sha256 = {
                     x86_64 = "7232c209641f0cad7e20bdb3a074cdb2fb31ae2aa73d42c491c705d28e0d3895",
                     aarch64 = "21eba9799ba0310b94cc1937c092f3ad376c6608a9f5a30340b10ec8e7ecd817",
+                },
+            },
+            ["18.4.12"] = {
+                arch_alias = { x86_64 = "x64", aarch64 = "arm64" },
+                sha256 = {
+                    x86_64 = "41f749a49d99fbc7daa8dfd571c20b396f4cfd4b2cd16735624bc416137f67ab",
+                    aarch64 = "b61df7f7849ce83c73c2a18916b8cb43ee9a236d62cddc61d884d8ee0a4659ec",
                 },
             },
         },
